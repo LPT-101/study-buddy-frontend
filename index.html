@@ -42,6 +42,17 @@
             100% { transform: rotate(360deg); }
         }
 
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
         /* Login Page Styles */
         .login-container {
             min-height: 100vh;
@@ -510,9 +521,11 @@
 
     <script>
         // Supabase Configuration
-        // TODO: Replace with your actual Supabase URL and anon key
         const SUPABASE_URL = 'https://uzwomlmslxsqevwwukuh.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV6d29tbG1zbHhzcWV2d3d1a3VoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTAwNTA3ODUsImV4cCI6MjA2NTYyNjc4NX0.Q_FimRBsC4XdR30gOnejHngZHUEXgyWVhISK8G_gqjo';
+        
+        // n8n Webhook Configuration
+        const N8N_WEBHOOK_BASE = 'https://n8n.rollersautomation.work';
         
         // Initialize Supabase client
         let supabase;
@@ -659,8 +672,30 @@
         }
 
         function showMessage(message, type) {
-            const messageDiv = document.getElementById('authMessage');
-            messageDiv.innerHTML = `<div class="${type}-message">${message}</div>`;
+            // Try auth message div first (for login page)
+            let messageDiv = document.getElementById('authMessage');
+            
+            // If not on login page, create a toast notification
+            if (!messageDiv || !messageDiv.offsetParent) {
+                const toast = document.createElement('div');
+                toast.className = `${type}-message`;
+                toast.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    right: 20px;
+                    max-width: 400px;
+                    z-index: 10000;
+                    animation: slideIn 0.3s ease-out;
+                `;
+                toast.textContent = message;
+                document.body.appendChild(toast);
+                
+                // Auto-remove after 5 seconds
+                setTimeout(() => toast.remove(), 5000);
+            } else {
+                // Use existing auth message div
+                messageDiv.innerHTML = `<div class="${type}-message">${message}</div>`;
+            }
         }
 
         function clearMessage() {
@@ -677,10 +712,112 @@
             spinner.style.display = isLoading ? 'block' : 'none';
         }
 
-        function startQuiz(quizType) {
-            // TODO: Implement quiz starting logic
-            // This will eventually call your n8n webhooks
-            alert(`Starting ${quizType} quiz - Integration with n8n webhooks coming next!`);
+        async function startQuiz(quizType) {
+            try {
+                // Get current user
+                const { data: { user } } = await supabase.auth.getUser();
+                if (!user) {
+                    showMessage('Please log in to start a quiz', 'error');
+                    return;
+                }
+
+                // Show loading state
+                showLoading('Initializing quiz...');
+
+                // Map quiz type names to match your n8n workflow expectations
+                const quizTypeMap = {
+                    'multiple-choice': 'Multiple Choice',
+                    'short-form': 'Short Answer',
+                    'long-form': 'Extended Response',
+                    'full-exam': 'Mixed Assessment'
+                };
+
+                // Call Phase 2 webhook
+                const response = await fetch(`${N8N_WEBHOOK_BASE}/webhook/study-buddy-subject-selection`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        user_id: user.id,
+                        user_email: user.email,
+                        student_name: user.email.split('@')[0], // Use email prefix as name for now
+                        quiz_type: quizTypeMap[quizType] || quizType,
+                        academic_year: 'Year 10', // You can make this dynamic later
+                        term: 'Term 1', // You can make this dynamic later
+                        timestamp: new Date().toISOString()
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const result = await response.json();
+                console.log('Webhook response:', result);
+
+                // Check if we got a session ID
+                if (result && result[0] && result[0].quiz_session_id) {
+                    // Store session ID for later use
+                    sessionStorage.setItem('current_quiz_session', result[0].quiz_session_id);
+                    
+                    // Show success and next steps
+                    showMessage('Quiz initialized! Loading subjects...', 'success');
+                    
+                    // For now, show the session details
+                    setTimeout(() => {
+                        alert(`Quiz Session Created!\n\nSession ID: ${result[0].quiz_session_id}\nSubject ID: ${result[0].subject_id}\n\nNext step: We need to build the subject selection interface!`);
+                        hideLoading();
+                    }, 1000);
+                } else {
+                    throw new Error('No session ID received from webhook');
+                }
+
+            } catch (error) {
+                console.error('Failed to start quiz:', error);
+                showMessage(`Failed to start quiz: ${error.message}`, 'error');
+                hideLoading();
+            }
+        }
+
+        // Loading overlay functions
+        function showLoading(message) {
+            // Remove any existing loader
+            const existingLoader = document.getElementById('loading-overlay');
+            if (existingLoader) {
+                existingLoader.remove();
+            }
+            
+            // Create new loader
+            const loader = document.createElement('div');
+            loader.id = 'loading-overlay';
+            loader.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.8);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                z-index: 9999;
+            `;
+            loader.innerHTML = `
+                <div style="text-align: center; color: white;">
+                    <div class="spinner"></div>
+                    <p style="margin-top: 20px; font-size: 1.125rem;">${message}</p>
+                </div>
+            `;
+            document.body.appendChild(loader);
+        }
+
+        function hideLoading() {
+            const loader = document.getElementById('loading-overlay');
+            if (loader) {
+                loader.remove();
+            }
         }
 
         // Event Listeners
